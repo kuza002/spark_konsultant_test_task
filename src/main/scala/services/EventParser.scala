@@ -7,12 +7,11 @@ import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 
 import java.sql.Timestamp
 import java.time.format.DateTimeFormatter
-import scala.util.Try
+import scala.util.{Failure, Success, Try}
 
 object EventParser {
   private val formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy_HH:mm:ss")
 
-  // Определяем схему DataFrame
   private val schema = StructType(Array(
     StructField("eventType", StringType, nullable = false),
     StructField("timestamp", TimestampType, nullable = false),
@@ -29,21 +28,48 @@ object EventParser {
 
   def parseWithErrors(lines: RDD[String]): (RDD[Event], RDD[String]) = {
     val parsed = lines.mapPartitions { iter =>
-      val results = iter.map(line => parseSingleLine(line, None)).toList
+      // Преобразуем итератор в список для многократного прохода
+      val linesList = iter.toList
+      // Создаем новый итератор для обработки
+      val linesIterator = linesList.iterator
+
+      val results = collection.mutable.ArrayBuffer.empty[(Option[Event], Option[String])]
+
+      while (linesIterator.hasNext) {
+        val line = linesIterator.next()
+        val result = parseSingleLine(line, linesIterator)
+        results += result
+
+        // Пропускаем уже обработанные строки в parseSingleLine
+        // (особенно важно для CARD_SEARCH)
+      }
+
       val events = results.flatMap(_._1)
       val errors = results.flatMap(_._2)
       Iterator((events, errors))
     }
+
     (parsed.flatMap(_._1), parsed.flatMap(_._2))
   }
 
   private def parsePartition(iter: Iterator[String]): Iterator[Event] = {
-    val lines = iter.toList
-    lines.sliding(2).flatMap {
-      case line :: next :: Nil => parseSingleLine(line, Some(next))._1
-      case line :: Nil        => parseSingleLine(line, None)._1
-      case _                  => None
+    val linesList = iter.toList
+    val linesIterator = linesList.iterator
+
+    val events = collection.mutable.ArrayBuffer.empty[Event]
+
+    while (linesIterator.hasNext) {
+      val line = linesIterator.next()
+      parseSingleLine(line, linesIterator) match {
+        case (Some(event), _) => events += event
+        case _ => // Игнорируем ошибки в parsePartition
+      }
     }
+
+    events.iterator
+  }
+  private def isTimeStamp(string: String): Boolean = {
+    Try(java.time.LocalDateTime.parse(string, formatter)).isSuccess
   }
 
   private def parseTimestamp(timeStr: String): Timestamp = {
@@ -51,7 +77,7 @@ object EventParser {
     Timestamp.valueOf(localDateTime)
   }
 
-  private def parseSingleLine(line: String, nextLine: Option[String]): (Option[Event], Option[String]) = {
+  private def parseSingleLine(line: String, linesIter: Iterator[String]): (Option[Event], Option[String]) = {
     if (line == null || line.trim.isEmpty) return (None, None)
 
     val parts = line.split(" ", 3)
@@ -60,30 +86,38 @@ object EventParser {
     }
 
     Try {
-      val timestamp = parseTimestamp(parts(1))
+      val timeStr = parts(1)
+      if (!isTimeStamp(timeStr)) {
+        return (None, None)
+      }
+
+      val timestamp = parseTimestamp(timeStr)
       parts(0) match {
-        case "SESSION_START" => (Some(SessionStart(timestamp)), None)
-        case "SESSION_END"   => (Some(SessionEnd(timestamp)), None)
+        case "SESSION_START" =>
+          (Some(SessionStart(timestamp)), None)
+
+        case "SESSION_END" =>
+          (Some(SessionEnd(timestamp)), None)
 
         case "QS" if parts.length >= 3 =>
           val query = parts(2).stripPrefix("{").stripSuffix("}")
-          nextLine match {
-            case Some(next) =>
-              val nextParts = next.split("\\s+")
-              if (nextParts.nonEmpty) {
-                val searchId = nextParts.head.toLong
-                val documents = nextParts.tail.toList
-                (Some(QuickSearch(timestamp, query, searchId, documents)), None)
-              } else {
-                (None, Some(s"Missing search results for QS: $line"))
-              }
-            case None =>
-              (None, Some(s"Missing next line for QS results: $line"))
+          if (linesIter.hasNext) {
+            val nextLine = linesIter.next()
+            val nextParts = nextLine.split("\\s+")
+            if (nextParts.nonEmpty && nextParts.head.matches("-?\\d+")) {
+              val searchId = nextParts.head.toLong
+              val documents = nextParts.tail.toList
+              (Some(QuickSearch(timestamp, query, searchId, documents)), None)
+            } else {
+              (None, Some(s"Invalid search results for QS: $line"))
+            }
+          } else {
+            (None, Some(s"Missing next line for QS results: $line"))
           }
 
         case "DOC_OPEN" if parts.length >= 3 =>
           val docParts = parts(2).split("\\s+", 2)
-          if (docParts.length == 2) {
+          if (docParts.length == 2 && docParts(0).matches("-?\\d+")) {
             val searchId = docParts(0).toLong
             val documentId = docParts(1)
             (Some(DocumentOpen(timestamp, searchId, documentId)), None)
@@ -92,30 +126,53 @@ object EventParser {
           }
 
         case "CARD_SEARCH_START" =>
-          val params = nextLine.map { nl =>
-            nl.split("\n")
-              .takeWhile(_ != "CARD_SEARCH_END")
-              .filter(_.startsWith("$"))
-              .map { param =>
-                val paramParts = param.split("\\s+", 2)
-                val paramId = paramParts(0).stripPrefix("$").toInt
-                val paramValue = if (paramParts.length > 1) paramParts(1) else ""
-                (paramId, paramValue)
-              }.toMap
-          }.getOrElse(Map.empty)
+          // Собираем все строки до CARD_SEARCH_END
+          val cardSearchLines = new collection.mutable.ArrayBuffer[String]()
+          var foundEnd = false
+          var searchResults: Option[String] = None
 
-          val (searchId, docs) = nextLine.flatMap { nl =>
-            nl.split("\n")
-              .dropWhile(_ != "CARD_SEARCH_END")
-              .drop(1)
-              .headOption
-              .map { resultsLine =>
-                val resultParts = resultsLine.split("\\s+")
-                (resultParts.head.toLong, resultParts.tail.toList)
+          while (linesIter.hasNext && !foundEnd) {
+            val nextLine = linesIter.next()
+            if (nextLine.trim == "CARD_SEARCH_END") {
+              foundEnd = true
+              // Берем следующую строку после END как результаты
+              if (linesIter.hasNext) {
+                searchResults = Some(linesIter.next())
               }
-          }.getOrElse((0L, List.empty))
+            } else {
+              cardSearchLines += nextLine
+            }
+          }
 
-          (Some(CardSearch(timestamp, params, searchId, docs)), None)
+          if (!foundEnd) {
+            return (None, Some(s"Missing CARD_SEARCH_END for: $line"))
+          }
+
+          // Парсим параметры
+          val params = cardSearchLines
+            .filter(_.startsWith("$"))
+            .flatMap { param =>
+              param.split("\\s+", 2) match {
+                case Array(id, value) =>
+                  Try(id.stripPrefix("$").toInt).toOption.map(_ -> value)
+                case _ => None
+              }
+            }.toMap
+
+          // Парсим результаты поиска
+          val (searchId, documents) = searchResults match {
+            case Some(results) =>
+              val resultParts = results.split("\\s+")
+              if (resultParts.nonEmpty && resultParts.head.matches("-?\\d+")) {
+                (resultParts.head.toLong, resultParts.tail.toList)
+              } else {
+                (0L, List.empty[String])
+              }
+            case None =>
+              (0L, List.empty[String])
+          }
+
+          (Some(CardSearch(timestamp, params, searchId, documents)), None)
 
         case eventType =>
           (None, Some(s"Unknown event type: $eventType"))
@@ -127,9 +184,6 @@ object EventParser {
   }
 
   def convertToDataFrame(spark: SparkSession, events: RDD[Event]): DataFrame = {
-    import spark.implicits._
-
-    // Преобразуем события в Row с явным указанием типов
     val rows = events.map {
       case e: SessionStart =>
         Row(e.eventType, e.timestamp, null, null, null, null, null)

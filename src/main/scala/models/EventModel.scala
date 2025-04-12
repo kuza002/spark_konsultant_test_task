@@ -2,6 +2,7 @@ package models
 
 import java.sql.Timestamp
 
+
 sealed trait Event {
   def eventType: String
   def timestamp: Timestamp
