@@ -28,9 +28,8 @@ object EventParser {
 
   def parseWithErrors(lines: RDD[String]): (RDD[Event], RDD[String]) = {
     val parsed = lines.mapPartitions { iter =>
-      // Преобразуем итератор в список для многократного прохода
+
       val linesList = iter.toList
-      // Создаем новый итератор для обработки
       val linesIterator = linesList.iterator
 
       val results = collection.mutable.ArrayBuffer.empty[(Option[Event], Option[String])]
@@ -40,8 +39,6 @@ object EventParser {
         val result = parseSingleLine(line, linesIterator)
         results += result
 
-        // Пропускаем уже обработанные строки в parseSingleLine
-        // (особенно важно для CARD_SEARCH)
       }
 
       val events = results.flatMap(_._1)
@@ -62,12 +59,13 @@ object EventParser {
       val line = linesIterator.next()
       parseSingleLine(line, linesIterator) match {
         case (Some(event), _) => events += event
-        case _ => // Игнорируем ошибки в parsePartition
+        case _ =>
       }
     }
 
     events.iterator
   }
+
   private def isTimeStamp(string: String): Boolean = {
     Try(java.time.LocalDateTime.parse(string, formatter)).isSuccess
   }

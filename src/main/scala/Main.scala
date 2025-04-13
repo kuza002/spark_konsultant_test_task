@@ -88,7 +88,7 @@ object Main {
           quickSearchDocsDF("document") === docOpensDF("documentId"))
         .groupBy(quickSearchDocsDF("date").cast("string").as("date_str"), $"document")
         .agg(count("*").as("open_count"))
-        .orderBy(desc("open_count"))
+        .orderBy($"date_str", $"document")
 
 
 //      // Сохраняем результаты в файл
