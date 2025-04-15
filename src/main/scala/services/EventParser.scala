@@ -1,200 +1,200 @@
 package services
 
-import models._
-import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.types._
-import org.apache.spark.sql.{DataFrame, Row, SparkSession}
+import models.{CardSearch, CardSearchFilter, DocumentID, DocumentOpen, SearchResult, QuickSearch, SessionEnd, SessionStart}
 
 import java.sql.Timestamp
 import java.time.format.DateTimeFormatter
-import scala.util.{Failure, Success, Try}
+import scala.collection.mutable.ListBuffer
 
 object EventParser {
-  private val formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy_HH:mm:ss")
+  private val timestampFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy_HH:mm:ss")
 
-  private val schema = StructType(Array(
-    StructField("eventType", StringType, nullable = false),
-    StructField("timestamp", TimestampType, nullable = false),
-    StructField("query", StringType, nullable = true),
-    StructField("searchId", LongType, nullable = true),
-    StructField("documents", ArrayType(StringType), nullable = true),
-    StructField("parameters", MapType(IntegerType, StringType), nullable = true),
-    StructField("documentId", StringType, nullable = true)
-  ))
-
-  def parse(lines: RDD[String]): RDD[Event] = {
-    lines.mapPartitions(parsePartition)
-  }
-
-  def parseWithErrors(lines: RDD[String]): (RDD[Event], RDD[String]) = {
-    val parsed = lines.mapPartitions { iter =>
-
-      val linesList = iter.toList
-      val linesIterator = linesList.iterator
-
-      val results = collection.mutable.ArrayBuffer.empty[(Option[Event], Option[String])]
-
-      while (linesIterator.hasNext) {
-        val line = linesIterator.next()
-        val result = parseSingleLine(line, linesIterator)
-        results += result
-
-      }
-
-      val events = results.flatMap(_._1)
-      val errors = results.flatMap(_._2)
-      Iterator((events, errors))
+  private def parseTimestamp(timeStr: String): Option[Timestamp] = {
+    try {
+      val localDateTime = java.time.LocalDateTime.parse(timeStr, timestampFormatter)
+      Some(Timestamp.valueOf(localDateTime))
+    } catch {
+      case _: Exception => None
     }
-
-    (parsed.flatMap(_._1), parsed.flatMap(_._2))
   }
 
-  private def parsePartition(iter: Iterator[String]): Iterator[Event] = {
-    val linesList = iter.toList
-    val linesIterator = linesList.iterator
+  private def parseDocumentID(documentID: String): Option[DocumentID] = {
+    val splitDocumentID = documentID.split("_")
+    if (splitDocumentID.length != 2) {
+      None
+    } else {
+      val baseNum = splitDocumentID(0)
+      val docNum = splitDocumentID(1)
 
-    val events = collection.mutable.ArrayBuffer.empty[Event]
-
-    while (linesIterator.hasNext) {
-      val line = linesIterator.next()
-      parseSingleLine(line, linesIterator) match {
-        case (Some(event), _) => events += event
-        case _ =>
+      if (baseNum.matches(Regexes.isDataBaseNum) && docNum.matches(Regexes.isDocNum)) {
+        Some(DocumentID(baseNum, docNum))
+      } else {
+        None
       }
     }
-
-    events.iterator
   }
 
-  private def isTimeStamp(string: String): Boolean = {
-    Try(java.time.LocalDateTime.parse(string, formatter)).isSuccess
-  }
+  private def parseSearchResult(line: String): Option[SearchResult]= {
 
-  private def parseTimestamp(timeStr: String): Timestamp = {
-    val localDateTime = java.time.LocalDateTime.parse(timeStr, formatter)
-    Timestamp.valueOf(localDateTime)
-  }
+    val searchResultStrSplit = line.split(" ")
+    val searchId = searchResultStrSplit.head
+    val documentsFoundStr = searchResultStrSplit.tail.toList
+    val documentsFound = ListBuffer[DocumentID]()
 
-  private def parseSingleLine(line: String, linesIter: Iterator[String]): (Option[Event], Option[String]) = {
-    if (line == null || line.trim.isEmpty) return (None, None)
-
-    val parts = line.split(" ", 3)
-    if (parts.length < 2) {
-      return (None, Some(s"Invalid line format: $line"))
+    if (searchResultStrSplit.isEmpty || !searchId.matches(Regexes.isPosOrNegNum)) {
+      return (None, Some(s"Invalid search ID format in line: $searchResultLine"))
     }
 
-    Try {
-      val timeStr = parts(1)
-      if (!isTimeStamp(timeStr)) {
-        return (None, None)
+    // Parse found documents
+    for (docIdStr <- documentsFoundStr) {
+      parseDocumentID(docIdStr) match {
+        case Some(docId) => documentsFound += docId
+        case None => return None
       }
+    }
+    Some(SearchResult(searchId, documentsFound))
+  }
+  private def parseFilter(filterStr: String): Option[CardSearchFilter] = {
+    val splitFilterStr = filterStr.split(" ", 2)
 
-      val timestamp = parseTimestamp(timeStr)
-      parts(0) match {
-        case "SESSION_START" =>
-          (Some(SessionStart(timestamp)), None)
+    val filterId = splitFilterStr(0)
+    if (!filterId.matches(Regexes.isFilterId) | splitFilterStr.length < 2 ){
+      None
+    }
+    else{
+      Some(CardSearchFilter(filterId, splitFilterStr(1)))
+    }
+  }
 
-        case "SESSION_END" =>
-          (Some(SessionEnd(timestamp)), None)
+  def sessionStartParser(line: String): (Option[SessionStart], Option[String]) = {
+    val splitLine = line.split(" ")
 
-        case "QS" if parts.length >= 3 =>
-          val query = parts(2).stripPrefix("{").stripSuffix("}")
-          if (linesIter.hasNext) {
-            val nextLine = linesIter.next()
-            val nextParts = nextLine.split("\\s+")
-            if (nextParts.nonEmpty && nextParts.head.matches("-?\\d+")) {
-              val searchId = nextParts.head.toLong
-              val documents = nextParts.tail.toList
-              (Some(QuickSearch(timestamp, query, searchId, documents)), None)
+    if (splitLine(0) != "SESSION_START"){
+      return (None, Some(s"Invalid SESSION_START format: $line"))
+    }
+
+    val timestamp = parseTimestamp(splitLine(1))
+    if (timestamp.isEmpty){
+      return (None, Some(s"Invalid timestamp format: $line"))
+    }
+
+    (Some(SessionStart(timestamp.get)), None)
+  }
+
+  def sessionEndParser(line: String): (Option[SessionEnd], Option[String]) = {
+    val splitLine = line.split(" ")
+
+    if (splitLine(0) != "SESSION_END"){
+      return (None, Some(s"Invalid SESSION_END format: $line"))
+    }
+
+    val timestamp = parseTimestamp(splitLine(1))
+    if (timestamp.isEmpty){
+      return (None, Some(s"Invalid timestamp format: $line"))
+    }
+
+    (Some(SessionEnd(timestamp.get)), None)
+  }
+
+  def docOpenParser(line: String): (Option[DocumentOpen], Option[String]) = {
+    val splitLine = line.split(" ")
+    if (splitLine.length < 4) {
+      return (None, Some(s"Invalid DOC_OPEN format: $line"))
+    }
+
+    val timestamp = parseTimestamp(splitLine(1))
+    if (timestamp.isEmpty) {
+      return (None, Some(s"Invalid time for DOC_OPEN: $line"))
+    }
+
+    if (!splitLine(2).matches(Regexes.isPosOrNegNum)) {
+      return (None, Some(s"Invalid search id for DOC_OPEN: $line"))
+    }
+    val searchId = splitLine(2).toLong
+
+    val documentID = parseDocumentID(splitLine(3))
+    if (documentID.isEmpty) {
+      return (None, Some(s"Invalid document ID format: $line"))
+    }
+
+    (Some(DocumentOpen(timestamp.get, searchId, documentID.get)), None)
+  }
+
+  def quickSearchParser(line: String, linesIter: Iterator[String]): (Option[QuickSearch], Option[String]) = {
+    val splitLine = line.split(" ", 3)
+    if (splitLine.length < 3) {
+      return (None, Some(s"Invalid QUICK_SEARCH format: $line"))
+    }
+
+    val timestamp = parseTimestamp(splitLine(1))
+    if (timestamp.isEmpty) {
+      return (None, Some(s"Invalid time for QUICK_SEARCH: $line"))
+    }
+
+    val query = splitLine(2).stripPrefix("{").stripSuffix("}")
+
+    val searchResultLine = linesIter.next()
+    val searchResult = parseSearchResult(searchResultLine)
+
+    if (searchResult.isEmpty){
+      return (None, Some(s"Missing search results line after: $line"))
+    }
+
+
+    // Parse DOC_OPEN events
+    val openedDocuments = ListBuffer[DocumentOpen]()
+    var processingDocOpens = true
+
+    while (processingDocOpens && linesIter.hasNext) {
+      val peekLine = linesIter.next()
+      val peekLineSplit = peekLine.split(" ")
+
+      if (peekLineSplit.nonEmpty && peekLineSplit(0) == "DOC_OPEN") {
+        docOpenParser(peekLine) match {
+          case (Some(docOpen), _) =>
+            if (docOpen.searchId == searchId) {
+              openedDocuments += docOpen
             } else {
-              (None, Some(s"Invalid search results for QS: $line"))
+              return (None, Some(s"DOC_OPEN searchId ${docOpen.searchId} doesn't match QUICK_SEARCH searchId $searchId in line: $peekLine"))
             }
-          } else {
-            (None, Some(s"Missing next line for QS results: $line"))
-          }
-
-        case "DOC_OPEN" if parts.length >= 3 =>
-          val docParts = parts(2).split("\\s+", 2)
-          if (docParts.length == 2 && docParts(0).matches("-?\\d+")) {
-            val searchId = docParts(0).toLong
-            val documentId = docParts(1)
-            (Some(DocumentOpen(timestamp, searchId, documentId)), None)
-          } else {
-            (None, Some(s"Invalid DOC_OPEN format: $line"))
-          }
-
-        case "CARD_SEARCH_START" =>
-          // Собираем все строки до CARD_SEARCH_END
-          val cardSearchLines = new collection.mutable.ArrayBuffer[String]()
-          var foundEnd = false
-          var searchResults: Option[String] = None
-
-          while (linesIter.hasNext && !foundEnd) {
-            val nextLine = linesIter.next()
-            if (nextLine.trim == "CARD_SEARCH_END") {
-              foundEnd = true
-              // Берем следующую строку после END как результаты
-              if (linesIter.hasNext) {
-                searchResults = Some(linesIter.next())
-              }
-            } else {
-              cardSearchLines += nextLine
-            }
-          }
-
-          if (!foundEnd) {
-            return (None, Some(s"Missing CARD_SEARCH_END for: $line"))
-          }
-
-          // Парсим параметры
-          val params = cardSearchLines
-            .filter(_.startsWith("$"))
-            .flatMap { param =>
-              param.split("\\s+", 2) match {
-                case Array(id, value) =>
-                  Try(id.stripPrefix("$").toInt).toOption.map(_ -> value)
-                case _ => None
-              }
-            }.toMap
-
-          // Парсим результаты поиска
-          val (searchId, documents) = searchResults match {
-            case Some(results) =>
-              val resultParts = results.split("\\s+")
-              if (resultParts.nonEmpty && resultParts.head.matches("-?\\d+")) {
-                (resultParts.head.toLong, resultParts.tail.toList)
-              } else {
-                (0L, List.empty[String])
-              }
-            case None =>
-              (0L, List.empty[String])
-          }
-
-          (Some(CardSearch(timestamp, params, searchId, documents)), None)
-
-        case eventType =>
-          (None, Some(s"Unknown event type: $eventType"))
+          case (_, Some(error)) => return (None, Some(error))
+          case _ => return (None, Some(s"Invalid DOC_OPEN format in line: $peekLine"))
+        }
+      } else {
+        processingDocOpens = false
+        // In a real implementation, you might want to push this line back
       }
-    }.recover {
-      case e: Exception =>
-        (None, Some(s"Failed to parse line '$line': ${e.getMessage}"))
-    }.get
-  }
-
-  def convertToDataFrame(spark: SparkSession, events: RDD[Event]): DataFrame = {
-    val rows = events.map {
-      case e: SessionStart =>
-        Row(e.eventType, e.timestamp, null, null, null, null, null)
-      case e: SessionEnd =>
-        Row(e.eventType, e.timestamp, null, null, null, null, null)
-      case e: QuickSearch =>
-        Row(e.eventType, e.timestamp, e.query, e.searchId, e.documents.toArray, null, null)
-      case e: CardSearch =>
-        Row(e.eventType, e.timestamp, null, e.searchId, e.documents.toArray, e.parameters, null)
-      case e: DocumentOpen =>
-        Row(e.eventType, e.timestamp, null, e.searchId, null, null, e.documentId)
     }
 
-    spark.createDataFrame(rows, schema)
+    (Some(QuickSearch(
+      timestamp = timestamp.get,
+      query = query,
+      searchId = searchId,
+      foundDocuments = foundDocuments.toList,
+      openedDocuments = openedDocuments.toSeq
+    )), None)
+  }
+
+  def cardSearchParser(line: String, iter: Iterator[String]):(Option[CardSearch], Option[String]) = {
+    val splitLine = line.split(" ")
+    val timestamp = parseTimestamp(splitLine(1))
+
+    if (timestamp.isEmpty) {
+      return (None, Some(s"Invalid time for CARD_SEARCH: $line"))
+    }
+
+    var filters = collection.mutable.ArrayBuffer.empty[CardSearchFilter]
+    var lineIter = iter.next()
+    while (lineIter != "CARD_SEARCH_END"){
+      val filter = parseFilter(line)
+      if (filter.isEmpty){
+        return (None, Some(s"Invalid filter format $line"))
+      }
+      filters+=filter.get
+      lineIter = iter.next()
+    }
+
+
+
   }
 }

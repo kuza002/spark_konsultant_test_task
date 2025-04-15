@@ -20,7 +20,8 @@ case class QuickSearch(
                         timestamp: Timestamp,
                         query: String,
                         searchId: Long,
-                        documents: Seq[String]
+                        foundDocuments: SearchResult,
+                        openedDocuments: Seq[DocumentOpen]
                       ) extends Event {
   override def eventType: String = "QS"
 }
@@ -37,7 +38,22 @@ case class CardSearch(
 case class DocumentOpen(
                          timestamp: Timestamp,
                          searchId: Long,
-                         documentId: String
+                         documentId: DocumentID
                        ) extends Event {
   override def eventType: String = "DOC_OPEN"
 }
+
+case class DocumentID(
+                     baseNum: String,
+                     documentNum: String
+                     ) {
+}
+
+case class CardSearchFilter(
+                           id: String,
+                           content: String
+                           )
+
+case class SearchResult(id: String,
+                        documents: Seq[DocumentID])
+
