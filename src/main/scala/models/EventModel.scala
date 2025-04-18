@@ -3,57 +3,67 @@ package models
 import java.sql.Timestamp
 
 
-sealed trait Event {
-  def eventType: String
+sealed trait Event extends Row {
   def timestamp: Timestamp
+
+  def isMultilineEvent: Boolean
 }
 
-case class SessionStart(timestamp: Timestamp) extends Event {
-  override def eventType: String = "SESSION_START"
+case class SessionStart(rowNum: Option[Long], timestamp: Timestamp) extends Event {
+  override def rowType: String = "SESSION_START"
+
+  override def isMultilineEvent: Boolean = false
+
 }
 
-case class SessionEnd(timestamp: Timestamp) extends Event {
-  override def eventType: String = "SESSION_END"
+case class SessionEnd(rowNum: Option[Long], timestamp: Timestamp) extends Event {
+  override def rowType: String = "SESSION_END"
+
+  override def isMultilineEvent: Boolean = false
+
 }
 
-case class QuickSearch(
-                        timestamp: Timestamp,
-                        query: String,
-                        searchId: Long,
-                        foundDocuments: SearchResult,
-                        openedDocuments: Seq[DocumentOpen]
-                      ) extends Event {
-  override def eventType: String = "QS"
-}
-
-case class CardSearch(
+case class QuickSearch(rowNum: Option[Long],
                        timestamp: Timestamp,
-                       parameters: Map[Int, String],
-                       searchId: Long,
-                       documents: Seq[String]
+                       query: String,
+                       searchResult: Option[SearchResult],
+                       openedDocuments: Option[Seq[DocumentOpen]]
+                      ) extends Event {
+  override def rowType: String = "QS"
+
+  override def isMultilineEvent: Boolean = true
+}
+
+case class CardSearch(rowNum: Option[Long],
+                      timestamp: Timestamp,
+                      filters: Seq[CardSearchFilter],
+                      searchResult: SearchResult,
+                      openedDocuments: Seq[DocumentOpen]
                      ) extends Event {
-  override def eventType: String = "CARD_SEARCH"
+  override def rowType: String = "CARD_SEARCH"
+
+  override def isMultilineEvent: Boolean = true
 }
 
-case class DocumentOpen(
-                         timestamp: Timestamp,
-                         searchId: Long,
-                         documentId: DocumentID
+case class DocumentOpen(rowNum: Option[Long],
+                        timestamp: Timestamp,
+                        searchId: Long,
+                        documentId: String
                        ) extends Event {
-  override def eventType: String = "DOC_OPEN"
+  override def rowType: String = "DOC_OPEN"
+
+  override def isMultilineEvent: Boolean = true
 }
 
-case class DocumentID(
-                     baseNum: String,
-                     documentNum: String
-                     ) {
+case class CardSearchStart(rowNum: Option[Long], timestamp: Timestamp) extends Event {
+  override def rowType: String = "CARD_SEARCH_START"
+
+  override def isMultilineEvent: Boolean = true
 }
 
-case class CardSearchFilter(
-                           id: String,
-                           content: String
-                           )
+case class CardSearchEnd(rowNum: Option[Long], timestamp: Timestamp) extends Event {
+  override def rowType: String = "CARD_SEARCH_END"
 
-case class SearchResult(id: String,
-                        documents: Seq[DocumentID])
+  override def isMultilineEvent: Boolean = true
+}
 
