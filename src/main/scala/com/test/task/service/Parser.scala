@@ -1,7 +1,7 @@
 package com.test.task.service
 
 import com.test.task.models._
-import com.test.task.util.Regexes
+import com.test.task.util.{ErrorLogger, Regexes}
 
 import java.sql.Timestamp
 import java.time.format.DateTimeFormatter
@@ -199,25 +199,21 @@ object Parser {
   def parseLine(line: String, rowNum: Int): Option[Row] = {
     val splitLine = line.split(" ")
 
-    splitLine(0) match {
-      case Regexes.isCardSearchStart() =>
-        parseCardSearchStart(rowNum, line)
-      case Regexes.isCardSearchEnd() =>
-        parseCardSearchEnd(rowNum, line)
-      case Regexes.isFilter() =>
-        parseCardSearchFilter(rowNum, line)
-      case Regexes.isStartSession() =>
-        parseSessionStart(rowNum, line)
-      case Regexes.isEndSession() =>
-        parseSessionEnd(rowNum, line)
-      case Regexes.isQuickSearch() =>
-        parseQuickSearch(rowNum, line)
-      case Regexes.isSearchResult() =>
-        parseSearchResult(rowNum, line)
-      case Regexes.isDocOpen() =>
-        parseDocOpen(rowNum, line)
-      case _ =>
-        None
+    val row = splitLine(0) match {
+      case Regexes.isCardSearchStart() => parseCardSearchStart(rowNum, line)
+      case Regexes.isCardSearchEnd() => parseCardSearchEnd(rowNum, line)
+      case Regexes.isFilter() => parseCardSearchFilter(rowNum, line)
+      case Regexes.isStartSession() => parseSessionStart(rowNum, line)
+      case Regexes.isEndSession() => parseSessionEnd(rowNum, line)
+      case Regexes.isQuickSearch() => parseQuickSearch(rowNum, line)
+      case Regexes.isSearchResult() => parseSearchResult(rowNum, line)
+      case Regexes.isDocOpen() => parseDocOpen(rowNum, line)
+      case _ => None
     }
+
+    if (row.isEmpty) {
+      ErrorLogger.logError(rowNum, line, "Unrecognized string")
+    }
+    row
   }
 }

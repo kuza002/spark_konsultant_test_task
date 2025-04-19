@@ -6,8 +6,7 @@ import org.apache.spark.sql.SparkSession
 
 object Producer {
   def getRDD(inputPath: String)(implicit spark: SparkSession): RDD[String] = {
-//    val sessionsPathList = FilesUtils.getListOfFiles(inputPath)
-    val tmp = Seq(inputPath)
-    spark.sparkContext.parallelize(tmp)
+    val sessionsPathList = FilesUtils.getListOfFiles(inputPath)
+    spark.sparkContext.parallelize(sessionsPathList)
   }
 }
