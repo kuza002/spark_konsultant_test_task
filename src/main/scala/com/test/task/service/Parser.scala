@@ -4,20 +4,32 @@ import com.test.task.models._
 import com.test.task.util.{ErrorLogger, Regexes}
 
 import java.sql.Timestamp
-import java.time.format.DateTimeFormatter
+import java.time.format.{DateTimeFormatter, DateTimeParseException}
+import java.time.{LocalDateTime, ZonedDateTime}
+import java.util.Locale
 
 object Parser {
+  private case class TimestampFormat(formatter: DateTimeFormatter, isZoned: Boolean)
 
-  private val timestampFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy_HH:mm:ss")
+  private val formats = List(
+    TimestampFormat(DateTimeFormatter.ofPattern("dd.MM.yyyy_HH:mm:ss"), isZoned = false),
+    TimestampFormat(DateTimeFormatter.ofPattern("EEE,_dd_MMM_yyyy_HH:mm:ss_xxxx", Locale.ENGLISH), isZoned = true),
+    TimestampFormat(DateTimeFormatter.ofPattern("EEE,_d_MMM_yyyy_HH:mm:ss_xxxx", Locale.ENGLISH), isZoned = true)
+  )
 
-  private def parseTimestamp(timeStr: String): Option[Timestamp] = {
-    try {
-      val localDateTime = java.time.LocalDateTime.parse(timeStr, timestampFormatter)
-      Some(Timestamp.valueOf(localDateTime))
-    } catch {
-      case _: Exception => None
-    }
+  def parseTimestamp(timeStr: String): Option[Timestamp] = {
+    formats.view.flatMap { fmt =>
+      try {
+        if (fmt.isZoned)
+          Some(Timestamp.from(ZonedDateTime.parse(timeStr, fmt.formatter).toInstant))
+        else
+          Some(Timestamp.valueOf(LocalDateTime.parse(timeStr, fmt.formatter)))
+      } catch {
+        case _: Exception => None
+      }
+    }.headOption
   }
+
 
   private def parseSessionStart(rowNum: Int, line: String): Option[SessionStart] = {
     val splitLine = line.split(" ")
@@ -97,28 +109,52 @@ object Parser {
   }
 
   private def parseDocOpen(rowNum: Int, line: String): Option[DocumentOpen] = {
-    val splitLine = line.split(" ")
-    if (splitLine.length < 4) {
-      return None
+    val splitLine = line.split("\\s+")
+
+    var searchId: Option[Long] = None
+    var docId: Option[String] = None
+    var timestamp: Option[Timestamp] = None
+
+    for (word <- splitLine) {
+      word match {
+        case Regexes.isSearchId() =>
+          searchId = Some(word.toLong)
+        case Regexes.isDocId() =>
+          docId = Some(word)
+        case _ =>
+          parseTimestamp(word) match {
+            case Some(ts) => timestamp = Some(ts)
+            case _ => return None
+          }
+      }
     }
 
-    val timestamp = parseTimestamp(splitLine(1))
-    if (timestamp.isEmpty) {
-      return None
-    }
-
-    if (!splitLine(2).matches(Regexes.isSearchId.toString())) {
-      return None
-    }
-    val searchId = splitLine(2).toLong
-
-    val documentID = splitLine(3)
-    documentID match {
-      case Regexes.isDocId() =>
-        Some(DocumentOpen(rowNum, timestamp.get, searchId, documentID))
+    (searchId, docId) match {
+      case (Some(sId), Some(dId)) =>
+        Some(DocumentOpen(rowNum, timestamp, sId, dId))
       case _ =>
         None
     }
+
+
+//    if (splitLine.length < 4) {
+//      return None
+//    }
+//
+//    val timestamp = parseTimestamp(splitLine(1))
+//
+//    if (!splitLine(2).matches(Regexes.isSearchId.toString())) {
+//      return None
+//    }
+//    val searchId = splitLine(2).toLong
+//
+//    val documentID = splitLine(3)
+//    documentID match {
+//      case Regexes.isDocId() =>
+//        Some(DocumentOpen(rowNum, timestamp, searchId, documentID))
+//      case _ =>
+//        None
+//    }
   }
 
   private def buildCardSearch(lineSeq: Seq[Row]): Set[CardSearch] = {
@@ -200,20 +236,28 @@ object Parser {
     val splitLine = line.split(" ")
 
     val row = splitLine(0) match {
-      case Regexes.isCardSearchStart() => parseCardSearchStart(rowNum, line)
-      case Regexes.isCardSearchEnd() => parseCardSearchEnd(rowNum, line)
-      case Regexes.isFilter() => parseCardSearchFilter(rowNum, line)
-      case Regexes.isStartSession() => parseSessionStart(rowNum, line)
-      case Regexes.isEndSession() => parseSessionEnd(rowNum, line)
-      case Regexes.isQuickSearch() => parseQuickSearch(rowNum, line)
-      case Regexes.isSearchResult() => parseSearchResult(rowNum, line)
-      case Regexes.isDocOpen() => parseDocOpen(rowNum, line)
+      case Regexes.isCardSearchStart() =>
+        parseCardSearchStart(rowNum, line)
+      case Regexes.isCardSearchEnd() =>
+        parseCardSearchEnd(rowNum, line)
+      case Regexes.isFilter() =>
+        parseCardSearchFilter(rowNum, line)
+      case Regexes.isStartSession() =>
+        parseSessionStart(rowNum, line)
+      case Regexes.isEndSession() =>
+        parseSessionEnd(rowNum, line)
+      case Regexes.isQuickSearch() =>
+        parseQuickSearch(rowNum, line)
+      case Regexes.isSearchId() =>
+        parseSearchResult(rowNum, line)
+      case Regexes.isDocOpen() =>
+        parseDocOpen(rowNum, line)
       case _ => None
     }
 
-    if (row.isEmpty) {
-      ErrorLogger.logError(rowNum, line, "Unrecognized string")
-    }
+//    if (row.isEmpty) {
+//      ErrorLogger.logError(rowNum, line, "Unrecognized string")
+//    }
     row
   }
 }

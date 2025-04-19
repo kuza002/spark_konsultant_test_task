@@ -63,7 +63,7 @@ case class CardSearch(rowNum: Int,
 }
 
 case class DocumentOpen(rowNum: Int,
-                        timestamp: Timestamp,
+                        timestamp: Option[Timestamp],
                         searchId: Long,
                         documentId: String
                        ) extends Row {

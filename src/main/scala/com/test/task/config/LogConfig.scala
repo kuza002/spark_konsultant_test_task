@@ -1,4 +1,4 @@
-package com.test.task.models
+package com.test.task.config
 
 object LogConfig {
   val logDirectory = "./output/logs"

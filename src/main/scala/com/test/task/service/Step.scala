@@ -1,7 +1,9 @@
 package com.test.task.service
 
 import com.test.task.models.{Row, Session}
+import com.test.task.util.ErrorLogger
 import org.apache.spark.rdd.RDD
+
 import scala.io.Source
 import scala.util.Using
 
@@ -20,7 +22,11 @@ object Step {
   def step1(rdd: RDD[(String, String, Int)]): RDD[(String, Int, Row)] = {
     rdd.flatMap {
       case (sessionPath, line, idx) =>
-        Parser.parseLine(line, idx).map(row => (sessionPath, idx, row))
+        val parsedRow = Parser.parseLine(line, idx).map(row => (sessionPath, idx, row))
+        if (parsedRow.isEmpty){
+          ErrorLogger.logError(sessionPath, line, "Unrecognized line")
+        }
+        parsedRow
     }
   }
 
