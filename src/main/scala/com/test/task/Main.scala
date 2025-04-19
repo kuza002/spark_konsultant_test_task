@@ -2,6 +2,7 @@ package com.test.task
 
 import com.test.task.config.LogConfig
 import com.test.task.models.DocumentOpen
+import com.test.task.service.DocumentAnalyzer
 import com.test.task.service.Producer.getRDD
 import com.test.task.service.Step.{step0, step1, step2}
 import com.test.task.util.RDDProcessor.RDDProcessorOps
@@ -24,51 +25,15 @@ object Main extends App {
       .transformRDD(step2)
       .cache()
 
-    // First task
-
     val targetValue = "ACC_45616"
+    val documentOccurrences = DocumentAnalyzer.countDocumentOccurrences(rdd, targetValue)
 
-    val count = rdd.flatMap { session =>
-      session.cardSearches.flatMap { cardSearch =>
-        cardSearch.searchResult.documents.collect {
-          case document if document == (targetValue) => 1
-        }
-      }
-    }.sum().toInt
-
-    println(s"Total occurrences of '$targetValue': $count")
+    println(s"Total occurrences of '$targetValue': $documentOccurrences")
 
     // Second task
+    val documentOpenStats = DocumentAnalyzer.getDocumentOpenStats(rdd)
 
-    val docOpens: RDD[DocumentOpen] = rdd.flatMap { session =>
-      val quickSearchOpens = session.quickSearches.flatMap { qs =>
-        qs.openedDocuments match {
-          case Some(docs) => docs
-          case None => Seq.empty[DocumentOpen]
-        }
-      }
-      val cardSearchOpens = session.cardSearches.flatMap(_.openedDocuments)
-      quickSearchOpens ++ cardSearchOpens
-    }.filter(_.timestamp.isDefined)
-
-    val docOpenCounts = docOpens.flatMap { docOpen =>
-      docOpen.timestamp.map { ts =>
-        val date = new Date(ts.getTime).toLocalDate
-        ((date, docOpen.documentId), 1)
-      }
-    }.reduceByKey(_ + _)
-
-    val sortedResults = docOpenCounts
-      .map { case ((date, docId), count) => (date, docId, count) }
-      .sortBy { case (date, _, count) => (date.toString, -count) }
-
-    val csvLines = sortedResults.map {
-      case (date, docId, count) => s"${date.toString},$docId,$count"
-    }
-
-    csvLines.saveAsTextFile("output/document_open_stats")
-
-    val sampleResults = sortedResults.take(20)
+    val sampleResults = documentOpenStats.take(20)
     sampleResults.foreach { case (date, docId, count) =>
       println(s"${date.toString}\t$docId\t$count")
     }

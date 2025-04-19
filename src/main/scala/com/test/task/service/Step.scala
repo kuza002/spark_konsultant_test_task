@@ -1,6 +1,7 @@
 package com.test.task.service
 
 import com.test.task.models.{Row, Session}
+import com.test.task.service.parsers.SessionBuilder
 import com.test.task.util.ErrorLogger
 import org.apache.spark.rdd.RDD
 
@@ -22,7 +23,7 @@ object Step {
   def step1(rdd: RDD[(String, String, Int)]): RDD[(String, Int, Row)] = {
     rdd.flatMap {
       case (sessionPath, line, idx) =>
-        val parsedRow = Parser.parseLine(line, idx).map(row => (sessionPath, idx, row))
+        val parsedRow = SessionBuilder.parseLine(line, idx).map(row => (sessionPath, idx, row))
         if (parsedRow.isEmpty){
           ErrorLogger.logError(sessionPath, line, "Unrecognized line")
         }
@@ -35,7 +36,7 @@ object Step {
       .map {
         case (sessionPath, records) =>
           val sortedRows = records.toList.sortBy(_._2).map(_._3)
-          Parser.parseSession(sessionPath, sortedRows)
+          SessionBuilder.parseSession(sessionPath, sortedRows)
       }
   }
 
