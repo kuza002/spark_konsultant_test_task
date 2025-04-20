@@ -2,7 +2,6 @@ package com.test.task.service.parsers
 
 import com.test.task.models.{CardSearchEnd, CardSearchFilter, CardSearchStart, DocumentOpen, QuickSearch, SearchResult, SessionEnd, SessionStart}
 import com.test.task.util.Regexes
-
 import java.sql.Timestamp
 
 object RowParser {
@@ -22,7 +21,7 @@ object RowParser {
   }
 
    def parseSessionEnd(rowNum: Int, line: String): Option[SessionEnd] = {
-    val splitLine = line.split("\\s+", 2) // Разделяем по любому количеству пробелов
+    val splitLine = line.split("\\s+", 2)
     if (splitLine.length < 2 || splitLine(0) != "SESSION_END") None
     else {
       TimestampParser.parseTimestamp(splitLine(1)).map(t => SessionEnd(rowNum, t))
@@ -70,7 +69,7 @@ object RowParser {
   }
 
    def parseSearchResult(rowNum: Int, line: String): Option[SearchResult] = {
-    val lineSplit = line.split("\\s+") // Разделяем по любому количеству пробелов
+    val lineSplit = line.split("\\s+")
     if (lineSplit.isEmpty) None
     else {
       try {

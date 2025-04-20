@@ -8,7 +8,6 @@ import java.time.format.DateTimeFormatter
 object ErrorLogger {
   private val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
 
-  // Создаем директорию для логов, если её нет
   new File(LogConfig.logDirectory).mkdirs()
 
   def logError(sessionPath: String, line: String, errorType: String): Unit = {
