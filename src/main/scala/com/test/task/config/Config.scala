@@ -1,5 +1,9 @@
 package com.test.task.config
 
-class Config {
-/// asdf
-}
+
+case class AnalyzerConfig(sparkSessionName: String,
+                          logsPath: String,
+                          targetValue: String,
+                          encoding: String)
+
+case class SparkConfig(hostName: String)

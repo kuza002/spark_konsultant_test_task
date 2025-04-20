@@ -7,7 +7,7 @@ import java.sql.Timestamp
 
 object RowParser {
    def parseSessionStart(rowNum: Int, line: String): Option[SessionStart] = {
-    val splitLine = line.split(" ")
+    val splitLine = line.split("\\s+")
 
     if (splitLine(0) != "SESSION_START") {
       return None
@@ -30,7 +30,7 @@ object RowParser {
   }
 
    def parseQuickSearch(rowNum: Int, line: String): Option[QuickSearch] = {
-    val splitLine = line.split(" ", 3)
+    val splitLine = line.split("\\s+", 3)
     if (splitLine.length < 3) {
       return None
     }
@@ -45,7 +45,7 @@ object RowParser {
   }
 
    def parseCardSearchStart(rowNum: Int, line: String): Option[CardSearchStart] = {
-    val splitLine = line.split(" ")
+    val splitLine = line.split("\\s+")
     if (splitLine(0) != "CARD_SEARCH_START") None
     else {
       val timestamp = TimestampParser.parseTimestamp(splitLine(1))
@@ -61,7 +61,7 @@ object RowParser {
   }
 
    def parseCardSearchFilter(rowNum: Int, line: String): Option[CardSearchFilter] = {
-    val splitLine = line.split(" ", 2)
+    val splitLine = line.split("\\s+", 2)
     if (splitLine.length < 2 || !splitLine(0).startsWith("$")) None
     else {
 
@@ -84,7 +84,7 @@ object RowParser {
   }
 
    def parseDocOpen(rowNum: Int, line: String): Option[DocumentOpen] = {
-    val splitLine = line.split("\\s+")
+    val splitLine = line.split("\\s+").tail
 
     var searchId: Option[Long] = None
     var docId: Option[String] = None

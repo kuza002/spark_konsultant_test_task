@@ -1,20 +1,32 @@
-ThisBuild / version := "0.1.0-SNAPSHOT"
-
-ThisBuild / scalaVersion := "2.12.18"
-
-lazy val root = (project in file("."))
-  .settings(
-    name := "spark_konsultant_test_task",
-  )
+version := "0.1"
+scalaVersion := "2.12.18"
+name := "spark_konsultant_test_task"
+organization := "com.test.task"
 
 val sparkVersion = "3.5.5"
+val scalatestVersion = "3.2.19"
+val specs2Version = "4.21.0"
+val pureconfigVersion = "0.17.8"
 
-libraryDependencies ++= Seq(
-  "org.apache.spark" %% "spark-core" % sparkVersion,
-  "org.apache.spark" %% "spark-sql" % sparkVersion,
-  "org.apache.spark" %% "spark-mllib" % sparkVersion % "provided",
+val sparkDependencies = Seq(
+  "org.apache.spark" %% "spark-core",
+  "org.apache.spark" %% "spark-sql"
+).map(_ % sparkVersion)
 
-  // Test dependencies
-  "org.scalactic" %% "scalactic" % "3.2.19",
-  "org.scalatest" %% "scalatest" % "3.2.19" % "test"
+val otherDependencies = Seq(
+  "com.github.pureconfig" %% "pureconfig" % pureconfigVersion,
 )
+
+val testDependencies = Seq(
+  "org.scalatest" %% "scalatest" % scalatestVersion,
+  "org.specs2" %% "specs2-core" % specs2Version
+).map(_ % Test)
+
+libraryDependencies ++= sparkDependencies ++ testDependencies ++ otherDependencies
+
+assembly / assemblyMergeStrategy := {
+  case PathList("META-INF", _*) => MergeStrategy.discard
+  case _ => MergeStrategy.first
+}
+
+assembly / mainClass := Some("com.test.task.Main")

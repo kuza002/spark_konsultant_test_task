@@ -1,5 +1,6 @@
 package com.test.task.service
 
+import com.test.task.config.AnalyzerConfig
 import com.test.task.models.{Row, Session}
 import com.test.task.service.parsers.SessionBuilder
 import com.test.task.util.ErrorLogger
@@ -7,12 +8,16 @@ import org.apache.spark.rdd.RDD
 
 import scala.io.Source
 import scala.util.Using
+import pureconfig.ConfigSource
+import pureconfig.generic.auto._
+
 
 object Step {
+  val config: AnalyzerConfig = ConfigSource.default.loadOrThrow[AnalyzerConfig]
 
   def step0(rdd: RDD[String]): RDD[(String, String, Int)] = {
     rdd.flatMap { sessionPath =>
-      Using.resource(Source.fromFile(sessionPath, "windows-1251")) { source =>
+      Using.resource(Source.fromFile(sessionPath, config.encoding)) { source =>
         source.getLines().toList.zipWithIndex.map {
           case (line, idx) => (sessionPath, line, idx)
         }

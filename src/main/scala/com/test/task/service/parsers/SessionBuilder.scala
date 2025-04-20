@@ -2,7 +2,6 @@ package com.test.task.service.parsers
 
 import com.test.task.models._
 import com.test.task.util.Regexes
-import java.sql.Timestamp
 
 
 object SessionBuilder {
