@@ -4,7 +4,6 @@ import com.test.task.config.{AnalyzerConfig, LogConfig}
 import com.test.task.service.DocumentAnalyzer
 import com.test.task.service.Producer.getRDD
 import com.test.task.service.parsers.SessionBuilder
-import com.test.task.util.RDDProcessor.RDDProcessorOps
 import com.test.task.util.RDDProducer.RDDProducingOps
 import com.test.task.util.SparkResource.usingSparkSession
 import pureconfig.ConfigSource
