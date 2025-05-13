@@ -1,34 +1,44 @@
 package com.test.task.service.parsers
 
+import com.test.task.config.AnalyzerConfig
 import com.test.task.models._
-import com.test.task.util.Regexes
+import com.test.task.util.{ErrorLogger, Regexes}
+import org.apache.spark.rdd.RDD
+
+import scala.io.Source
+import scala.util.Using
+import pureconfig.ConfigSource
+import pureconfig.generic.auto._
 
 
 object SessionBuilder {
+  val config: AnalyzerConfig = ConfigSource.default.loadOrThrow[AnalyzerConfig]
 
-  private def buildCardSearch(lineSeq: Seq[Row]): Set[CardSearch] = {
-    val cardSearchStarts = lineSeq.collect { case cs: CardSearchStart => cs }
+  private def buildCardSearch(lineSeq: Seq[Option[Row]]): Set[CardSearch] = {
+    val rowsWithOutNone = lineSeq.flatten
+
+    val cardSearchStarts = rowsWithOutNone.collect { case cs: CardSearchStart => cs }
 
     cardSearchStarts.flatMap { startRow =>
 
-      val cardSearchEndOpt = lineSeq.collectFirst {
+      val cardSearchEndOpt = rowsWithOutNone.collectFirst {
         case endRow: CardSearchEnd if endRow.rowNum > startRow.rowNum => endRow
       }
 
       cardSearchEndOpt.flatMap { endRow =>
 
-        val filters = lineSeq.collect {
+        val filters = rowsWithOutNone.collect {
           case filter: CardSearchFilter
             if filter.rowNum > startRow.rowNum && filter.rowNum < endRow.rowNum => filter
         }
 
-        val searchResultOpt = lineSeq.collectFirst {
+        val searchResultOpt = rowsWithOutNone.collectFirst {
           case sr: SearchResult if sr.rowNum > endRow.rowNum => sr
         }
 
         searchResultOpt.map { searchResult =>
 
-          val docOpens = lineSeq.collect {
+          val docOpens = rowsWithOutNone.collect {
             case doc: DocumentOpen if doc.rowNum > searchResult.rowNum => doc
           }.takeWhile(_.searchId == searchResult.id)
 
@@ -44,17 +54,18 @@ object SessionBuilder {
     }.toSet
   }
 
-  private def buildQuickSearch(lineSeq: Seq[Row]): Set[QuickSearch] = {
-    lineSeq
+  private def buildQuickSearch(lineSeq: Seq[Option[Row]]): Set[QuickSearch] = {
+    val rowsWithOutNone = lineSeq.flatten
+    rowsWithOutNone
       .collect { case qs: QuickSearch => qs }
       .map { qs =>
-        val searchResultOpt = lineSeq.collectFirst {
+        val searchResultOpt = rowsWithOutNone.collectFirst {
           case sr: SearchResult if sr.rowNum == qs.rowNum + 1 => sr
         }
 
         val docOpens = searchResultOpt match {
           case Some(sr) =>
-            lineSeq
+            rowsWithOutNone
               .collect { case doc: DocumentOpen if doc.rowNum > sr.rowNum => doc }
               .takeWhile(_.searchId == sr.id)
               .toList
@@ -70,15 +81,24 @@ object SessionBuilder {
   }
 
   def parseSession(sessionPath: String,
-                   lineSeq: Seq[Row]): Session = {
+                   lineSeq: Seq[Option[Row]]): Option[Session] = {
+    val sessionStart = lineSeq.head
+    if (sessionStart.isEmpty)
+      return None
 
-    Session(
+
+    val sessionEnd = lineSeq.last
+    if (sessionEnd.isEmpty)
+      return None
+
+
+    Option(Session(
       sessionPath,
-      lineSeq.head.asInstanceOf[SessionStart],
-      lineSeq.last.asInstanceOf[SessionEnd],
+      sessionStart.get.asInstanceOf[SessionStart],
+      sessionEnd.get.asInstanceOf[SessionEnd],
       buildQuickSearch(lineSeq),
       buildCardSearch(lineSeq)
-    )
+    ))
   }
 
   def parseLine(line: String, rowNum: Int): Option[Row] = {
@@ -105,4 +125,25 @@ object SessionBuilder {
     }
     row
   }
+
+
+  def extractSessionsFromPaths(rdd: RDD[String]): RDD[Option[Session]] = {
+    rdd.map { sessionPath =>
+      Using.resource(Source.fromFile(sessionPath, config.encoding)) { source =>
+        SessionBuilder.parseSession(sessionPath, source.getLines().toList.zipWithIndex.map {
+          case (line, idx) =>
+            var row: Option[Row] = None
+            try {
+              row = SessionBuilder.parseLine(line, idx)
+            }
+            catch {
+              case _: Exception =>
+                ErrorLogger.logError(sessionPath, line, "Unrecognized line")
+            }
+            row
+        })
+      }
+    }
+  }
+
 }

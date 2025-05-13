@@ -10,23 +10,21 @@ object DocumentAnalyzer {
   def countDocumentOccurrences(rdd: RDD[Session], target: String): Int = {
     rdd.flatMap { session =>
       session.cardSearches.flatMap { cardSearch =>
-        cardSearch.searchResult.documents.collect {
-          case document if document == (target) => 1
-        }
+        cardSearch.filters.collect({
+          case filter if filter.content == target => 1
+        })
       }
     }.sum().toInt
   }
 
   def getDocumentOpenStats(rdd: RDD[Session]): RDD[(LocalDate, String, Int)] = {
-    val docOpens: RDD[DocumentOpen] = rdd.flatMap { session =>
-      val quickSearchOpens = session.quickSearches.flatMap { qs =>
+    val docOpens = rdd.flatMap { session =>
+      session.quickSearches.flatMap { qs =>
         qs.openedDocuments match {
           case Some(docs) => docs
           case None => Seq.empty[DocumentOpen]
         }
       }
-      val cardSearchOpens = session.cardSearches.flatMap(_.openedDocuments)
-      quickSearchOpens ++ cardSearchOpens
     }.filter(_.timestamp.isDefined).cache()
 
     val docOpenCounts = docOpens.flatMap { docOpen =>
