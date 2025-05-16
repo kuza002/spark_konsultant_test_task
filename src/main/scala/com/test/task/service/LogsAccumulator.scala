@@ -5,7 +5,7 @@ import org.apache.spark.util.AccumulatorV2
 import scala.collection.mutable.ListBuffer
 
 class LogsAccumulator extends AccumulatorV2[String, ListBuffer[String]] {
-  private var _list: ListBuffer[String] = ListBuffer.empty[String]
+  private val _list: ListBuffer[String] = ListBuffer.empty[String]
 
   override def isZero: Boolean = _list.isEmpty
 

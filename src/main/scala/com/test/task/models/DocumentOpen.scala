@@ -1,13 +1,14 @@
 package com.test.task.models
 
-import com.test.task.service.parsers.{SessionBuilder, TimestampParser}
+import com.test.task.util.{LogsIterator, TimestampParser}
 
 import java.sql.Timestamp
+import scala.collection.mutable.ListBuffer
 
 case class DocumentOpen(rowNum: Int,
                         timestamp: Option[Timestamp],
-                        searchId: Long,
-                        documentId: String
+                        searchId: Int,
+                        document: Document
                        ) {
   override def toString: String = {
     s"\n${
@@ -15,43 +16,42 @@ case class DocumentOpen(rowNum: Int,
         case Some(t) => t
         case _ => "No Time"
       }
-    } $searchId, $documentId"
+    } $searchId, $document"
   }
 }
 
 object DocumentOpen {
-  def fromString(rowNum: Int, line: String): Option[DocumentOpen] = {
-    var splitLine = line.split("\\s+")
+  private def isDocumentOpen(line: String): Boolean = line.split("\\s")(0).strip() == "DOC_OPEN"
 
-    if (splitLine(0).strip() != "DOC_OPEN")
-      return None
+  def getSeq(iter: LogsIterator): Seq[DocumentOpen] = {
+    val docOpenList = ListBuffer.empty[DocumentOpen]
+    while (iter.hasNext && DocumentOpen.isDocumentOpen(iter.getLine)) {
+      val docOpen = DocumentOpen.fromIter(iter)
+      docOpenList += docOpen
+      iter.next()
+    }
+    docOpenList
+  }
 
-    splitLine = splitLine.tail
-
-    var searchId: Option[Long] = None
-    var docId: Option[String] = None
+  def fromIter(iter: LogsIterator): DocumentOpen = {
     var timestamp: Option[Timestamp] = None
+    val rowNum = iter.getPosition
+    var splitLine = iter.getLine.split("\\s+")
 
-    splitLine.foreach(word => {
-      val curWord = TimestampParser.parseTimestamp(word)
-      if (curWord.nonEmpty)
-        timestamp = curWord
-      else if (SessionBuilder.isSearchResultId(word)) {
-        searchId = Some(word.toLong)
-      }
-      else if (SessionBuilder.isDocId(word)) {
-        docId = Some(word)
-      }
-      else {
-        return None
-      }
-    })
+    var ifNoDate = 1
+    splitLine = splitLine.tail
+    if (splitLine.length == 3) {
+      timestamp = TimestampParser.parseTimestamp(splitLine(0))
+      ifNoDate = 0
+    }
+    val searchId = splitLine(1-ifNoDate).toInt
+    val doc = Document.fromString(splitLine(2-ifNoDate))
 
-    (searchId, docId) match {
-      case (Some(sId), Some(dId)) =>
-        Some(new DocumentOpen(rowNum, timestamp, sId, dId))
-      case _ =>
-        None
+    try
+      new DocumentOpen(rowNum, timestamp, searchId, doc.get)
+    catch {
+      case e: Exception =>
+        throw new IllegalArgumentException(s"${e.getStackTrace.headOption}.\n Missed DOC_OPEN parameter")
     }
   }
 }

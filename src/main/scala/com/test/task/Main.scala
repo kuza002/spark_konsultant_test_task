@@ -1,13 +1,10 @@
 package com.test.task
 
 import com.test.task.config.AnalyzerConfig
-import com.test.task.service.Producer.getRDD
-import com.test.task.service.parsers.SessionBuilder
-import com.test.task.util.RDDProducer.RDDProducingOps
-import com.test.task.util.SparkResource.usingSparkSession
+import com.test.task.util.SparkResource.{logsList, usingSparkSession}
 import pureconfig.ConfigSource
 import pureconfig.generic.auto._
-import com.test.task.service.{DocumentAnalyzer, LogsAccumulator}
+import com.test.task.service.{DataProcessor, Task1, Task2}
 
 import java.io.PrintWriter
 
@@ -15,29 +12,26 @@ import java.io.PrintWriter
 object Main extends App {
   val config = ConfigSource.default.loadOrThrow[AnalyzerConfig]
   usingSparkSession(config.sparkSessionName) { implicit spark =>
-    val logsList = new LogsAccumulator()
-    spark.sparkContext.register(logsList, "logsList")
 
-    val sessionsPathRdd = config.logsPath.produceRDD(getRDD)
-    val sessionsRdd = SessionBuilder.extractSessionsFromPaths(sessionsPathRdd, logsList).flatMap(_.toSeq).cache()
+    val sessions = DataProcessor.process(config.filesPath)
 
-    val targetValue = config.targetValue
-    val documentOccurrences = DocumentAnalyzer.countDocumentOccurrences(sessionsRdd, targetValue)
+    sessions.foreach(println)
 
-    val documentOpenStats = DocumentAnalyzer.getDocumentOpenStats(sessionsRdd)
+    // Почему если запишу запись логов в DataProcessor логи не записываются?
+    val logsWriter = new PrintWriter(config.logsPath)
+    logsList.value.toList.foreach(log => logsWriter.println(log))
+    logsWriter.close()
 
+    val documentOccurrences = Task1.count(sessions, config.targetValue)
+    val documentOpenStats = Task2.count(sessions)
 
-    val outputWriter = new PrintWriter("./src/main/resources/output/result.txt")
-    outputWriter.println(s"Total occurrences of '$targetValue': $documentOccurrences")
+    val outputWriter = new PrintWriter(config.outputPath)
+    outputWriter.println(s"Total occurrences of '${config.targetValue}': $documentOccurrences")
 
     val sampleResults = documentOpenStats.take(1000)
     sampleResults.foreach { case (date, docId, count) =>
       outputWriter.println(s"${date.toString}\t$docId\t$count")
     }
     outputWriter.close()
-
-    val logsWriter = new PrintWriter("./src/main/resources/output/logs.txt")
-    logsList.value.toList.foreach(log => logsWriter.println(log))
-    logsWriter.close()
   }
 }

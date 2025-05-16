@@ -2,8 +2,10 @@ package com.test.task.config
 
 
 case class AnalyzerConfig(sparkSessionName: String,
-                          logsPath: String,
+                          filesPath: String,
                           targetValue: String,
-                          encoding: String)
+                          encoding: String,
+                          outputPath: String,
+                          logsPath: String)
 
 case class SparkConfig(hostName: String)

@@ -1,8 +1,8 @@
-package com.test.task.service.parsers
+package com.test.task.util
 
 import java.sql.Timestamp
-import java.time.{LocalDateTime, ZonedDateTime}
 import java.time.format.DateTimeFormatter
+import java.time.{LocalDateTime, ZonedDateTime}
 import java.util.Locale
 
 object TimestampParser {
